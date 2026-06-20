@@ -97,8 +97,14 @@ app.get('/api/levels/:id', (req, res) => {
   });
 });
 
+function resolveSourceLevelId(id: number): number {
+  if (id >= 0) return id;
+  return Math.floor((-id - 1) / 1000);
+}
+
 app.get('/api/levels/:id/verify', (req, res) => {
-  const id = parseInt(req.params.id);
+  const rawId = parseInt(req.params.id);
+  const id = resolveSourceLevelId(rawId);
   const edgeParam = req.query.edge as string;
 
   if (!edgeParam) {
@@ -161,6 +167,103 @@ app.get('/api/levels/:id/verify', (req, res) => {
       [to]: f2
     },
     ratio: isHarmonic ? [minF, maxF] : null
+  });
+});
+
+app.get('/api/levels/:id/practice', (req, res) => {
+  const id = parseInt(req.params.id);
+  const edgeCount = parseInt(req.query.edges as string) || 3;
+  const data = loadLevels();
+  const level = data.levels.find((l: LevelData) => l.id === id);
+
+  if (!level) {
+    res.status(404).json({
+      success: false,
+      error: `Level ${id} not found`
+    });
+    return;
+  }
+
+  const mainEdges = level.edges;
+  if (mainEdges.length === 0) {
+    res.status(400).json({
+      success: false,
+      error: 'Level has no edges'
+    });
+    return;
+  }
+
+  const actualCount = Math.min(edgeCount, mainEdges.length);
+  const maxStart = mainEdges.length - actualCount;
+  const startIdx = Math.floor(Math.random() * (maxStart + 1));
+  const selectedEdges = mainEdges.slice(startIdx, startIdx + actualCount);
+
+  const usedPointIds = new Set<string>();
+  selectedEdges.forEach(e => {
+    usedPointIds.add(e.from);
+    usedPointIds.add(e.to);
+  });
+
+  const mainPoints = level.anchorPoints.filter(p => usedPointIds.has(p.id));
+
+  const mainPointIds = new Set(mainPoints.map(p => p.id));
+  const nearAuxPoints = level.anchorPoints.filter(p => {
+    if (mainPointIds.has(p.id)) return false;
+    const isAux = p.id.startsWith('d') || p.id.startsWith('e') || p.id.startsWith('f');
+    if (!isAux) return false;
+    for (const mp of mainPoints) {
+      const dx = mp.x - p.x;
+      const dy = mp.y - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.3) return true;
+    }
+    return false;
+  }).slice(0, 4);
+
+  const allPoints = [...mainPoints, ...nearAuxPoints];
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  allPoints.forEach(p => {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  });
+
+  const padding = 0.15;
+  const rangeX = Math.max(maxX - minX, 0.2);
+  const rangeY = Math.max(maxY - minY, 0.2);
+  const scaleX = (1 - 2 * padding) / rangeX;
+  const scaleY = (1 - 2 * padding) / rangeY;
+  const scale = Math.min(scaleX, scaleY);
+  const offsetX = padding + (1 - 2 * padding - rangeX * scale) / 2 - minX * scale;
+  const offsetY = padding + (1 - 2 * padding - rangeY * scale) / 2 - minY * scale;
+
+  const normalizedPoints = allPoints.map(p => ({
+    ...p,
+    x: p.x * scale + offsetX,
+    y: p.y * scale + offsetY
+  }));
+
+  const practiceId = -id * 1000 - startIdx - 1;
+  const practiceName = `${level.name}·练习`;
+  const practiceLevel: LevelData = {
+    id: practiceId,
+    name: practiceName,
+    creatureName: `${level.creatureName}(练习)`,
+    creatureDescription: `这是从「${level.name}」中抽取的短练习，共 ${actualCount} 条星脉，帮助新手熟悉谐波共振连接。`,
+    anchorPoints: normalizedPoints,
+    edges: [...selectedEdges],
+    lightPollution: level.lightPollution,
+    rotationSpeed: level.rotationSpeed
+  };
+
+  res.json({
+    success: true,
+    level: practiceLevel,
+    sourceLevel: id,
+    startEdgeIndex: startIdx,
+    edgeCount: actualCount
   });
 });
 

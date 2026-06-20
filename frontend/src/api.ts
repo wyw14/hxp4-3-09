@@ -42,6 +42,19 @@ export async function verifyEdge(levelId: number, from: string, to: string): Pro
   }
 }
 
+export async function getPracticeLevel(id: number, edgeCount: number = 3): Promise<LevelData | null> {
+  try {
+    const res = await fetch(`${API_BASE}/levels/${id}/practice?edges=${edgeCount}`);
+    const data = await res.json();
+    if (data.success) {
+      return data.level as LevelData;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}/health`);

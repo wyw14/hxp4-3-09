@@ -362,6 +362,20 @@ export class Game {
     const data = await getLevel(levelId);
     if (!data) return false;
 
+    this.applyLevelData(levelId, data);
+    return true;
+  }
+
+  loadLevelDirectly(levelData: LevelData): void {
+    if (this.completionTimeoutId) {
+      clearTimeout(this.completionTimeoutId);
+      this.completionTimeoutId = null;
+    }
+
+    this.applyLevelData(levelData.id, levelData);
+  }
+
+  private applyLevelData(levelId: number, data: LevelData): void {
     this.state.currentLevel = levelId;
     this.state.levelData = data;
     this.state.connections = [];
@@ -374,8 +388,6 @@ export class Game {
 
     this.onLevelChange?.(data);
     this.onProgressChange?.(0, data.edges.length);
-
-    return true;
   }
 
   getCurrentLevel(): number {

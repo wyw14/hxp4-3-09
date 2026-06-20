@@ -28,9 +28,18 @@ const MAX_LEVELS = 3;
 let isPracticeMode = false;
 let lastFormalLevelId = 1;
 
+function isPracticeLevelId(id: number): boolean {
+  return id < 0;
+}
+
 function resolveSourceLevelId(currentId: number): number {
   if (currentId >= 0) return currentId;
-  return Math.floor((-currentId - 1) / 1000);
+  const raw = -currentId;
+  const edgeCount = raw % 1000;
+  if (edgeCount === 0) {
+    return Math.floor(raw / 1000000);
+  }
+  return Math.floor(raw / 1000000);
 }
 
 function enterPracticeMode(): void {
@@ -47,7 +56,8 @@ function exitPracticeMode(): void {
 
 game.setCallbacks({
   onLevelChange: (level: LevelData) => {
-    const displayId = level.id < 0 ? resolveSourceLevelId(level.id) : level.id;
+    const isPractice = isPracticeLevelId(level.id);
+    const displayId = isPractice ? resolveSourceLevelId(level.id) : level.id;
     levelNumEl.textContent = String(displayId);
     creatureNameEl.textContent = level.creatureName;
     totalCountEl.textContent = String(level.edges.length);
@@ -55,10 +65,10 @@ game.setCallbacks({
     progressFillEl.style.width = '0%';
     completeModal.classList.remove('show');
 
-    if (level.id < 0) {
+    if (isPractice) {
       enterPracticeMode();
       hintTitleEl.textContent = `练习模式 · ${level.name}`;
-      hintTextEl.textContent = '这是从正式关卡中抽取的短练习，帮助你熟悉谐波共振连接。完成后可返回正式关卡。';
+      hintTextEl.textContent = '这是从正式关卡中抽取的连通星脉短练习，帮助你熟悉谐波共振连接。完成后可返回正式关卡。';
     } else {
       exitPracticeMode();
       lastFormalLevelId = level.id;
@@ -128,10 +138,9 @@ btnNext.addEventListener('click', async () => {
   const current = game.getCurrentLevel();
 
   if (isPracticeMode) {
-    const sourceId = resolveSourceLevelId(current);
     completeModal.classList.remove('show');
     btnHint.textContent = '显示频率';
-    const practice = await getPracticeLevel(sourceId, 3);
+    const practice = await getPracticeLevel(lastFormalLevelId, 3);
     if (practice) {
       game.loadLevelDirectly(practice);
     }
@@ -146,12 +155,12 @@ btnNext.addEventListener('click', async () => {
 
 btnPractice.addEventListener('click', async () => {
   const current = game.getCurrentLevel();
-  const sourceId = resolveSourceLevelId(current);
-  if (current >= 0) {
+  if (!isPracticeLevelId(current)) {
     lastFormalLevelId = current;
   }
   btnHint.textContent = '显示频率';
-  const practice = await getPracticeLevel(sourceId, 3);
+  completeModal.classList.remove('show');
+  const practice = await getPracticeLevel(lastFormalLevelId, 3);
   if (practice) {
     game.loadLevelDirectly(practice);
   } else {

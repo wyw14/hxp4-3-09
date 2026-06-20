@@ -97,9 +97,75 @@ app.get('/api/levels/:id', (req, res) => {
   });
 });
 
+function encodePracticeId(sourceId: number, startIdx: number, edgeCount: number): number {
+  return -(sourceId * 1000000 + startIdx * 1000 + edgeCount);
+}
+
+function decodePracticeId(practiceId: number): { sourceId: number; startIdx: number; edgeCount: number } | null {
+  if (practiceId >= 0) return null;
+  const raw = -practiceId;
+  const edgeCount = raw % 1000;
+  const startIdx = Math.floor(raw / 1000) % 1000;
+  const sourceId = Math.floor(raw / 1000000);
+  if (edgeCount === 0) return null;
+  return { sourceId, startIdx, edgeCount };
+}
+
+function isPracticeLevel(id: number): boolean {
+  return id < 0;
+}
+
+function edgesShareVertex(e1: { from: string; to: string }, e2: { from: string; to: string }): boolean {
+  const s1 = new Set([e1.from, e1.to]);
+  return s1.has(e2.from) || s1.has(e2.to);
+}
+
+function findConnectedPathEdges(allEdges: { from: string; to: string }[], edgeCount: number): { edges: { from: string; to: string }[]; startIdx: number } | null {
+  if (allEdges.length < edgeCount) edgeCount = allEdges.length;
+  if (edgeCount <= 0) return null;
+
+  const candidates: { edges: { from: string; to: string }[]; startIdx: number }[] = [];
+
+  for (let start = 0; start <= allEdges.length - edgeCount; start++) {
+    const slice = allEdges.slice(start, start + edgeCount);
+    let connected = true;
+    for (let i = 1; i < slice.length; i++) {
+      let shares = false;
+      for (let j = 0; j < i; j++) {
+        if (edgesShareVertex(slice[i], slice[j])) {
+          shares = true;
+          break;
+        }
+      }
+      if (!shares) {
+        connected = false;
+        break;
+      }
+    }
+    if (connected) {
+      candidates.push({ edges: slice, startIdx: start });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { edges: allEdges.slice(0, edgeCount), startIdx: 0 };
+  }
+
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  return pick;
+}
+
 function resolveSourceLevelId(id: number): number {
   if (id >= 0) return id;
-  return Math.floor((-id - 1) / 1000);
+  const d = decodePracticeId(id);
+  return d ? d.sourceId : Math.floor(-id / 1000000);
+}
+
+function getPracticeEdgeWhitelist(practiceId: number, sourceLevel: LevelData): { from: string; to: string }[] | null {
+  const d = decodePracticeId(practiceId);
+  if (!d) return null;
+  if (d.startIdx + d.edgeCount > sourceLevel.edges.length) return null;
+  return sourceLevel.edges.slice(d.startIdx, d.startIdx + d.edgeCount);
 }
 
 app.get('/api/levels/:id/verify', (req, res) => {
@@ -147,9 +213,20 @@ app.get('/api/levels/:id/verify', (req, res) => {
     return;
   }
 
-  const isDefinedEdge = level.edges.some(
+  let isDefinedEdge = level.edges.some(
     e => (e.from === from && e.to === to) || (e.from === to && e.to === from)
   );
+
+  let inPracticeWhitelist = true;
+  if (isPracticeLevel(rawId)) {
+    const whitelist = getPracticeEdgeWhitelist(rawId, level);
+    if (whitelist) {
+      inPracticeWhitelist = whitelist.some(
+        e => (e.from === from && e.to === to) || (e.from === to && e.to === from)
+      );
+      isDefinedEdge = inPracticeWhitelist && isDefinedEdge;
+    }
+  }
 
   const f1 = fromPoint.frequency;
   const f2 = toPoint.frequency;
@@ -162,6 +239,8 @@ app.get('/api/levels/:id/verify', (req, res) => {
     valid: isDefinedEdge && isHarmonic,
     isHarmonic,
     isDefinedEdge,
+    isPractice: isPracticeLevel(rawId),
+    inPracticeWhitelist,
     frequencies: {
       [from]: f1,
       [to]: f2
@@ -193,10 +272,17 @@ app.get('/api/levels/:id/practice', (req, res) => {
     return;
   }
 
-  const actualCount = Math.min(edgeCount, mainEdges.length);
-  const maxStart = mainEdges.length - actualCount;
-  const startIdx = Math.floor(Math.random() * (maxStart + 1));
-  const selectedEdges = mainEdges.slice(startIdx, startIdx + actualCount);
+  const pick = findConnectedPathEdges(mainEdges, edgeCount);
+  if (!pick) {
+    res.status(400).json({
+      success: false,
+      error: 'Cannot find connected path edges'
+    });
+    return;
+  }
+
+  const { edges: selectedEdges, startIdx } = pick;
+  const actualCount = selectedEdges.length;
 
   const usedPointIds = new Set<string>();
   selectedEdges.forEach(e => {
@@ -245,13 +331,14 @@ app.get('/api/levels/:id/practice', (req, res) => {
     y: p.y * scale + offsetY
   }));
 
-  const practiceId = -id * 1000 - startIdx - 1;
+  const practiceId = encodePracticeId(id, startIdx, actualCount);
   const practiceName = `${level.name}·练习`;
+  const edgeWhitelist = selectedEdges.map(e => `${e.from}-${e.to}`);
   const practiceLevel: LevelData = {
     id: practiceId,
     name: practiceName,
     creatureName: `${level.creatureName}(练习)`,
-    creatureDescription: `这是从「${level.name}」中抽取的短练习，共 ${actualCount} 条星脉，帮助新手熟悉谐波共振连接。`,
+    creatureDescription: `这是从「${level.name}」中抽取的连通星脉短练习，共 ${actualCount} 条星脉，帮助新手熟悉谐波共振连接。`,
     anchorPoints: normalizedPoints,
     edges: [...selectedEdges],
     lightPollution: level.lightPollution,
@@ -263,7 +350,10 @@ app.get('/api/levels/:id/practice', (req, res) => {
     level: practiceLevel,
     sourceLevel: id,
     startEdgeIndex: startIdx,
-    edgeCount: actualCount
+    edgeCount: actualCount,
+    edgeWhitelist,
+    temporary: true,
+    persistent: false
   });
 });
 
